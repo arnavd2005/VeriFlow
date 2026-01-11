@@ -72,6 +72,7 @@ Before handing this to a Design Engineer, ensure:
 
 Example:
 
+Input: DSL to explain the state machine specification
 ```
 
 GLOBAL_TRANSITIONS: 
@@ -118,6 +119,26 @@ TRANSITIONS:
                        TO(IDLE_LOCKED)
 
 ```
+
+Intermediate JSON representation 
+```
+{
+  "product_name": "Smart_Lock_v1",
+  "global_transitions": [
+    { "event": "MASTER_CODE", "action": "STOP_TIMERS", "next_state": "IDLE" }
+  ],
+  "states": {
+    "IDLE_LOCKED": {
+      "outputs": { "bolt": "HIGH", "led": "OFF" },
+      "transitions": [
+        { "event": "KEYPAD_INPUT", "condition": "code==valid", "next_state": "ENTRY_ALLOWED" }
+      ]
+    }
+  }
+}
+
+```
+Output: Generated Verilog code
 
 # Why Comments Matter for Logic Synthesis
 
