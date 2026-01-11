@@ -68,6 +68,50 @@ Before handing this to a Design Engineer, ensure:
 
 [ ] Are global overrides (like a Reset) clearly defined in GLOBAL_TRANSITIONS?
 
+Example:
+GLOBAL_TRANSITIONS: 
+     ON_EVENT(USER_ENTERS_MASTER_CODE): 
+           DO(STOP_ALL_TIMERS, CLEAR_ALARM) -> TO(IDLE_LOCKED)
+
+STATE_LIST:
+    IDLE_LOCKED   [Output: Lock_Bolt=HIGH, Alarm_LED=OFF]
+    ENTRY_ALLOWED [Output: Lock_Bolt=LOW,  Alarm_LED=OFF]
+    DOOR_OPEN_WAITING [Output: Lock_Bolt=LOW, Timer=RUNNING]
+    ALARM_STATE   [Output: Lock_Bolt=HIGH, Alarm_LED=BLINK]
+    PAUSED_MODE [Output: Alarm_LED=BLINK, Alarm_Logic=DISABLED]
+
+TRANSITIONS:
+    FROM(IDLE_LOCKED):
+        ON_EVENT(KEYPAD_INPUT):
+            IF (Code == VALID) -> TO(ENTRY_ALLOWED)
+            IF (Code == INVALID AND Attempt_Count < 3) -> STAY
+            IF (Code == INVALID AND Attempt_Count >= 3) -> TO(ALARM_STATE)
+
+    FROM(ENTRY_ALLOWED):
+        ON_EVENT(SENSE_DOOR_CLOSED):
+            TO(IDLE_LOCKED)
+
+    FROM(ENTRY_ALLOWED):
+        ON_EVENT(SENSE_DOOR_OPEN):
+            DO(START_TIMER: 60s) -> TO(DOOR_OPEN_WAITING)
+
+    FROM(DOOR_OPEN_WAITING):
+        ON_EVENT(SENSE_DOOR_CLOSED):
+            DO(STOP_TIMER) -> TO(IDLE_LOCKED)
+
+        ON_EVENT(TIMER_EXPIRED):
+            TO(ALARM_STATE)
+
+    FROM(ALARM_STATE): 
+        ON_EVENT(USER_PRESSES_PAUSE):
+              DO(START_TIMER: 30m) -> TO(PAUSED_MODE) FROM(PAUSED_MODE): 
+
+         ON_TIMEOUT(30m): 
+               IF (SENSE_DOOR_OPEN == TRUE): 
+                       TO(ALARM_STATE)
+               ELSE:
+                       TO(IDLE_LOCKED) 
+
 # Why Comments Matter for Logic Synthesis
 
 Here are three specific ways your # comments help me build a better circuit:
