@@ -30,8 +30,10 @@ Syntax: ```text FROM(STATE_NAME): ON_EVENT(Trigger_Name): IF (Condition) -> TO(N
 
 
 # Keywords & Reserved Terms
-Keyword	Purpose	Example
-TO(State)	Defines the destination state.	-> TO(ALARM_STATE)
+| Keyword | Purpose | Example |
+| ----------- | ----------- |----------- |
+| TO(State) | Defines the destination state. | -> TO(ALARM_STATE) |
+
 STAY	Explicitly tells the system to remain in the current state.	IF (Error) -> STAY
 DO(Action)	Commands a one-time action during a transition.	DO(START_TIMER: 10s)
 ON_TIMEOUT(t)	A trigger that fires when a timer expires.	ON_TIMEOUT(5m) -> TO(IDLE)
@@ -69,6 +71,9 @@ Before handing this to a Design Engineer, ensure:
 [ ] Are global overrides (like a Reset) clearly defined in GLOBAL_TRANSITIONS?
 
 Example:
+
+```
+
 GLOBAL_TRANSITIONS: 
      ON_EVENT(USER_ENTERS_MASTER_CODE): 
            DO(STOP_ALL_TIMERS, CLEAR_ALARM) -> TO(IDLE_LOCKED)
@@ -110,7 +115,9 @@ TRANSITIONS:
                IF (SENSE_DOOR_OPEN == TRUE): 
                        TO(ALARM_STATE)
                ELSE:
-                       TO(IDLE_LOCKED) 
+                       TO(IDLE_LOCKED)
+
+```
 
 # Why Comments Matter for Logic Synthesis
 
