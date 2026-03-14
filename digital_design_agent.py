@@ -172,7 +172,7 @@ class DSLParser:
             data = trans_match.groupdict()
             transition = {
                 "event": data['event'].upper(),
-                "condition": data.get('condition', 'True').strip(),
+                "condition": (data.get('condition') or 'True').strip(),
                 "target": data['target'].upper(),
                 "comment": self._extract_comment(line)
             }
@@ -239,13 +239,13 @@ class Validator:
     def _check_comment_hints(self):
         """Checks for special comments and provides feedback."""
         for state, data in self.sm.data['states'].items():
-            comment = data.get('comment', '')
+            comment = data.get('comment') or ''
             if 'v2' in comment or 'future' in comment:
                 self.critiques.append(
                     f"Future-Proofing Notice: The comment for state '{state}' ('{comment}') mentions future plans. I will keep this in mind for extensibility."
                 )
             for trans in data.get('transitions', []):
-                comment = trans.get('comment', '')
+                comment = trans.get('comment') or ''
                 if 'critical' in comment.lower():
                     self.critiques.append(
                         f"Criticality Notice: Transition from '{state}' on event '{trans['event']}' is marked as critical. I will prioritize this path."

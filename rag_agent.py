@@ -1,28 +1,25 @@
 import os
+import sys
 import json
+import argparse
 from dotenv import load_dotenv
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
-from langchain_classic.agents import AgentExecutor
-from langchain_core.tools import tool
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
 
 # Import the classes from our original script
 from digital_design_agent import StateMachine, DSLParser, Validator
 
-# --- 1. Define the Tools ---
 
-@tool
-def analyze_dsl_and_critique(dsl_text: str) -> str:
-    """
-    Analyzes a given block of Digital State Machine DSL text.
-    It parses the DSL, validates the design for errors (like deadlocks or
-    undefined states), and provides a critique. If the design is valid,
-    it saves it to 'state_machine.json'.
-    The DSL should be provided as a multi-line string.
-    """
-    # We reuse the components we already built
+def parse_and_validate(dsl_file_path: str):
+    """Parse and validate the DSL file. Returns (state_machine, critiques)."""
+    try:
+        with open(dsl_file_path, 'r') as f:
+            dsl_text = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{dsl_file_path}' not found.")
+        sys.exit(1)
+
     state_machine = StateMachine()
     parser = DSLParser(dsl_text, state_machine)
     parser.parse()
@@ -30,108 +27,78 @@ def analyze_dsl_and_critique(dsl_text: str) -> str:
     validator = Validator(state_machine)
     critiques = validator.validate()
 
-    feature = state_machine.data.get('header', {}).get('feature', 'N/A')
+    return state_machine, critiques
 
-    if critiques:
-        critique_str = "\n".join(f"- {c}" for c in critiques)
-        return (
-            f"Analysis of '{feature}': I found some issues that need attention:\n"
-            f"{critique_str}\n"
-            "The design was NOT saved. Please address the issues and submit the corrected DSL."
-        )
 
-    state_machine.save()
-    return (
-        f"Analysis of '{feature}': The design is valid and has been saved to state_machine.json. "
-        "No critical issues found."
+def generate_verilog(state_machine: StateMachine, llm) -> str:
+    """Send the parsed state machine JSON to the LLM and return Verilog code."""
+    design_json = json.dumps(state_machine.data, indent=2)
+
+    system_prompt = (
+        "You are a Senior Digital Design Engineer specializing in RTL design.\n"
+        "Given a state machine specification in JSON format (parsed from a Moore Machine DSL),\n"
+        "generate clean, synthesizable Verilog code. Follow these rules:\n"
+        "- Use always @(posedge clk or posedge rst) for sequential logic\n"
+        "- Use always @(*) for combinational output logic (Moore machine)\n"
+        "- Include proper synchronous reset logic\n"
+        "- Define states as localparams\n"
+        "- Output all signals defined in the state outputs\n"
+        "- Add brief comments referencing the original DSL intent where useful\n"
+        "- Output ONLY the Verilog code block, no extra explanation."
     )
 
-@tool
-def read_current_design() -> str:
-    """
-    Reads and returns the current state machine design from the 'state_machine.json' file.
-    This is useful for understanding the existing logic before adding new features.
-    """
-    if os.path.exists('state_machine.json'):
-        with open('state_machine.json', 'r') as f:
-            # Use json.load and json.dumps to pretty-print it for the LLM
-            try:
-                design = json.load(f)
-                return json.dumps(design, indent=2)
-            except json.JSONDecodeError:
-                return "Error: The 'state_machine.json' file is corrupted."
-    return "No design currently exists."
-
-def main():
-    """Sets up and runs the LangChain RAG agent."""
-    # --- 2. Initialize the "Brain" (Gemini) ---
-    # Load environment variables from .env file
-    load_dotenv()
-
-    # Make sure to set your GOOGLE_API_KEY in a .env file or as an environment variable
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        print("Error: GOOGLE_API_KEY not found. Please set it in your environment or a .env file.")
-        return
-
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key)
-
-    # --- 3. Construct the Agent's Personality (The Prompt) ---
-    system_prompt = """You are a Senior Digital Design Engineer.
-        Your goal is to help Product Managers design robust state machines using a specific DSL.
-
-        Your primary workflow is:
-        1. When the user provides a new DSL design, you MUST use the 'analyze_dsl_and_critique' tool to validate it.
-        2. If the tool returns errors or critiques, you must explain the technical impact of these issues to the user (e.g., 'The undefined state means the machine will crash if it tries to enter it'). Then, suggest a specific fix in the DSL.
-        3. Before suggesting changes or additions, you should use the 'read_current_design' tool to understand the existing system. This prevents you from breaking previous logic.
-        4. Guide the user to provide the DSL as a complete block of text. Do not accept single-line, simplified DSL like 'FROM(A)->TO(B)'.
-        """
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("placeholder", "{chat_history}"),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
+    response = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Generate synthesizable Verilog for this state machine:\n\n{design_json}")
     ])
 
-    # --- 4. Assemble the Agent ---
-    tools = [analyze_dsl_and_critique, read_current_design]
-    agent = create_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+    return response.content
 
-    # --- 5. Run the Agent CLI ---
-    print("--- RAG Digital Design Agent ---")
-    print("I can help you design and validate a state machine. Provide your DSL as text or a file path.")
 
-    chat_history = []
+def main():
+    load_dotenv()
 
-    while True:
-        try:
-            user_input = input("PM > ")
-            if user_input.lower() in ['exit', 'quit']:
-                break
+    arg_parser = argparse.ArgumentParser(
+        description='VeriFlow: Parse a DSL file, validate it, and generate Verilog via LLM.'
+    )
+    arg_parser.add_argument('dsl_file', help='Path to the .dsl file')
+    args = arg_parser.parse_args()
 
-            if not user_input:
-                continue
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("Error: ANTHROPIC_API_KEY not found. Set it in your environment or a .env file.")
+        sys.exit(1)
 
-            # As a convenience, if the input is a valid file, read it.
-            if os.path.exists(user_input):
-                print(f"Agent > Reading DSL from file: {user_input}")
-                with open(user_input, 'r') as f:
-                    user_input = f.read()
+    # --- Step 1: Parse and validate ---
+    print(f"\n[1/3] Parsing DSL file: {args.dsl_file}")
+    state_machine, critiques = parse_and_validate(args.dsl_file)
 
-            response = agent_executor.invoke({
-                "input": user_input,
-                "chat_history": chat_history
-            })
+    feature = state_machine.data.get('header', {}).get('feature', 'Unknown')
+    print(f"      Feature: {feature}")
 
-            print(f"Agent > {response['output']}")
-            chat_history.extend(response['chat_history'])
+    # --- Step 2: Report errors and stop if invalid ---
+    if critiques:
+        print("\n[!] Validation FAILED. Please fix the following errors before proceeding:\n")
+        for i, critique in enumerate(critiques, 1):
+            print(f"  {i}. {critique}")
+        print("\nCorrect the DSL file and re-run.")
+        sys.exit(1)
 
-        except (KeyboardInterrupt, EOFError):
-            break
-        except Exception as e:
-            print(f"An error occurred: {e}")
+    print("\n[2/3] Validation PASSED. Saving state machine to state_machine.json...")
+    state_machine.save()
+
+    # --- Step 3: Generate Verilog ---
+    print("\n[3/3] Sending to LLM for Verilog generation...\n")
+    llm = ChatAnthropic(model="claude-sonnet-4-6", anthropic_api_key=api_key)
+    verilog_code = generate_verilog(state_machine, llm)
+
+    print("--- Generated Verilog ---\n")
+    print(verilog_code)
+
+    output_file = args.dsl_file.rsplit('.', 1)[0] + '.v'
+    with open(output_file, 'w') as f:
+        f.write(verilog_code)
+    print(f"\n--- Verilog saved to: {output_file} ---")
 
 
 if __name__ == "__main__":
